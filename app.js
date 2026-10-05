@@ -3,31 +3,31 @@ const $=id=>document.getElementById(id),canvas=$('field'),ctx=canvas.getContext(
 document.querySelector('.legend .dot:not(.agent):not(.spent)').style.background='#cc3e3e';
 let base=[],state,seed=0,selected=0,running=false,last=0,acc=0,drag=null,view={x:0,y:0,size:100},bounds={x:0,y:0,w:100},size={w:600,h:600};
 const params=()=>({c:+$('strength').value,p:+$('power').value,damping:+$('damping').value,consume:$('consume').checked});
+// Reference settings from the original Python simulation.
+const REFERENCE={frame_skip:1,p:.3,c:10,damping:.9,dt:.1,mass:4};
 // A single site's attraction, before the vector sum and velocity update.
 const graphCard=document.createElement('div');
 graphCard.className='force-graph';
 graphCard.innerHTML=`<style>
-.force-graph{margin:0 0 22px;padding:14px 10px;background:#fafbf8;border:1px solid #dfe3dc;border-radius:10px}.force-graph h3{font-size:13px;margin:0 0 9px}.force-graph p{font-size:11px;line-height:1.55;color:#67706f;margin:8px 0 0}.force-graph .equation{font-size:13px;color:#222b36;overflow-wrap:anywhere}.force-graph svg{display:block;width:100%;height:auto;margin-top:10px}.force-graph .curve-key{display:flex;gap:12px;flex-wrap:wrap}.force-graph .curve-key span:first-child{color:#cc3e3e}.force-graph .curve-key span:last-child{color:#92998f}
-</style><h3>Attraction over distance</h3><div class="equation">F(d) = C × w / max(d², 0.01)<sup>P</sup></div><p id="forceEquation"></p><svg id="forcePlot" viewBox="0 0 300 220" role="img" aria-label="Attraction versus distance"></svg><p class="curve-key"><span>━━ Selected site</span><span>┄┄ Reference</span></p><p>Inverse-power falloff: away from the cutoff, F ∝ 1/d<sup>2P</sup>. The reference stays at C = 10, w = 4, P = 0.30. Distance: 1–100; the vertical scale adjusts to fit both curves.</p><p id="forceExample"></p><p id="momentumEquation"></p>`;
+.force-graph{margin:0 0 22px;padding:14px 10px;background:#fafbf8;border:1px solid #dfe3dc;border-radius:10px}.force-graph h3{font-size:13px;margin:0 0 9px}.force-graph p{font-size:11px;line-height:1.55;color:#67706f;margin:8px 0 0}.force-graph .equation{font:italic 25px Georgia,serif;color:#222b36;text-align:center;margin:12px 0}.force-graph .fraction{display:inline-flex;vertical-align:middle;flex-direction:column;text-align:center;font-size:23px}.force-graph .fraction span:first-child{border-bottom:1px solid #222b36;padding:0 12px 3px}.force-graph .fraction span:last-child{padding-top:3px}.force-graph details{margin:10px 0 0;padding-top:8px;font-size:11px}.force-graph svg{display:block;width:100%;height:auto;margin-top:10px}.force-graph .curve-key{display:flex;gap:12px;flex-wrap:wrap}.force-graph .curve-key span:first-child{color:#cc3e3e}.force-graph .curve-key span:last-child{color:#92998f}
+</style><h3>Attraction over distance</h3><div class="equation" aria-label="f equals g times m divided by r to the power two p">f = <span class="fraction"><span>gm</span><span>r<sup>2p</sup></span></span></div><p>g: pull strength · m: point mass<br>r: distance · p: falloff</p><p id="forceEquation"></p><svg id="forcePlot" viewBox="0 0 300 220" role="img" aria-label="Attraction versus distance"></svg><p class="curve-key"><span>━━ Selected site</span><span>┄┄ Reference</span></p><p>Reference: g = 10, m = 4, p = 0.3.<br>The vertical scale adjusts to fit.</p><details><summary>Reference settings</summary><p>C (g) = 10 · P = 0.3<br>DAMPING = 0.9 · DT = 0.1<br>frame_skip = 1 (playback 1×)</p><p>The curve shows one active point’s pull. Momentum and playback affect movement, rather than this curve. A small distance cutoff keeps the simulation finite near a point.</p></details>`;
 document.querySelector('#strength').closest('section').querySelector('h2').after(graphCard);
 function sitePull(distance,c,weight,p){return c*weight/Math.pow(Math.max(.01,distance*distance),p);}
 function drawForceGraph(){
  const site=base.find(s=>s.id===selected);if(!site)return;
- const {c,p,damping}=params(),weight=site.weight,reference=d=>sitePull(d,10,4,.3);
- const top=Math.max(40,c*weight),yMax=Math.ceil(top/10)*10;
+ const {c,p}=params(),weight=site.weight,reference=d=>sitePull(d,REFERENCE.c,REFERENCE.mass,REFERENCE.p);
+ const top=Math.max(REFERENCE.c*REFERENCE.mass,c*weight),yMax=Math.ceil(top/10)*10;
  const left=46,right=288,upper=25,bottom=180;
  const px=d=>left+(d-1)/99*(right-left),py=f=>bottom-f/yMax*(bottom-upper);
  let markup='';
  for(let i=0;i<=4;i++){const value=yMax*i/4,y=py(value);markup+=`<path d="M${left} ${y}H${right}" stroke="#e5e9e1"/><text x="${left-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#67706f">${Number(value.toFixed(2))}</text>`;}
  for(const d of [1,25,50,75,100]){const x=px(d);markup+=`<text x="${x}" y="197" text-anchor="middle" font-size="10" fill="#67706f">${d}</text>`;}
- markup+=`<path d="M${left} ${upper}V${bottom}H${right}" fill="none" stroke="#92998f"/><text x="${left}" y="13" font-size="10" fill="#67706f">Attraction F</text><text x="167" y="215" text-anchor="middle" font-size="10" fill="#67706f">Distance d</text>`;
+ markup+=`<path d="M${left} ${upper}V${bottom}H${right}" fill="none" stroke="#92998f"/><text x="${left}" y="13" font-size="10" fill="#67706f">Pull f</text><text x="167" y="215" text-anchor="middle" font-size="10" fill="#67706f">Distance r</text>`;
  const path=fn=>Array.from({length:397},(_,i)=>{const d=1+i/4;return `${i?'L':'M'}${px(d).toFixed(2)},${py(fn(d)).toFixed(2)}`;}).join(' ');
  markup+=`<path d="${path(reference)}" fill="none" stroke="#92998f" stroke-width="1.5" stroke-dasharray="4 4"/><path d="${path(d=>sitePull(d,c,weight,p))}" fill="none" stroke="#cc3e3e" stroke-width="2.5"/>`;
  $('forcePlot').innerHTML=markup;
  $('forcePlot').setAttribute('aria-label',`Site ${site.id+1}: attraction versus distance. C ${c}, salience ${weight}, exponent ${p}. Attraction at distance 10: ${sitePull(10,c,weight,p).toFixed(2)}. Red curve compared with a fixed reference.`);
- $('forceEquation').textContent=`Site ${site.id+1}: F(d) = ${c} × ${weight} / max(d², 0.01)^${p.toFixed(2)}`;
- $('forceExample').textContent=`At d = 10: F = ${sitePull(10,c,weight,p).toFixed(2)} · at d = 50: F = ${sitePull(50,c,weight,p).toFixed(2)}. This is one active site's pull; the simulation adds all active sites' pulls as vectors.`;
- $('momentumEquation').textContent=`Momentum: v next = ${damping.toFixed(2)} × (v + 0.1 × total attraction). Playback speed changes the animation rate. These do not change the attraction curve.`;
+ $('forceEquation').textContent=`Site ${site.id+1}: g = ${c} · m = ${weight} · p = ${p.toFixed(2)}`;
 }
 
 function randomGenerator(n){return()=>{n|=0;n=n+0x6D2B79F5|0;let t=Math.imul(n^n>>>15,1|n);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};}
