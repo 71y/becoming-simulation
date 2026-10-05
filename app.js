@@ -3,11 +3,38 @@ const $=id=>document.getElementById(id),canvas=$('field'),ctx=canvas.getContext(
 document.querySelector('.legend .dot:not(.agent):not(.spent)').style.background='#cc3e3e';
 let base=[],state,seed=0,selected=0,running=false,last=0,acc=0,drag=null,view={x:0,y:0,size:100},bounds={x:0,y:0,w:100},size={w:600,h:600};
 const params=()=>({c:+$('strength').value,p:+$('power').value,damping:+$('damping').value,consume:$('consume').checked});
+// A single site's attraction, before the vector sum and velocity update.
+const graphCard=document.createElement('div');
+graphCard.className='force-graph';
+graphCard.innerHTML=`<style>
+.force-graph{margin:0 0 22px;padding:14px 10px;background:#fafbf8;border:1px solid #dfe3dc;border-radius:10px}.force-graph h3{font-size:13px;margin:0 0 9px}.force-graph p{font-size:11px;line-height:1.55;color:#67706f;margin:8px 0 0}.force-graph .equation{font-size:13px;color:#222b36;overflow-wrap:anywhere}.force-graph svg{display:block;width:100%;height:auto;margin-top:10px}.force-graph .curve-key{display:flex;gap:12px;flex-wrap:wrap}.force-graph .curve-key span:first-child{color:#cc3e3e}.force-graph .curve-key span:last-child{color:#92998f}
+</style><h3>Attraction over distance</h3><div class="equation">F(d) = C × w / max(d², 0.01)<sup>P</sup></div><p id="forceEquation"></p><svg id="forcePlot" viewBox="0 0 300 220" role="img" aria-label="Attraction versus distance"></svg><p class="curve-key"><span>━━ Selected site</span><span>┄┄ Reference</span></p><p>Inverse-power falloff: away from the cutoff, F ∝ 1/d<sup>2P</sup>. The reference stays at C = 10, w = 4, P = 0.30. Distance: 1–100; the vertical scale adjusts to fit both curves.</p><p id="forceExample"></p><p id="momentumEquation"></p>`;
+document.querySelector('#strength').closest('section').querySelector('h2').after(graphCard);
+function sitePull(distance,c,weight,p){return c*weight/Math.pow(Math.max(.01,distance*distance),p);}
+function drawForceGraph(){
+ const site=base.find(s=>s.id===selected);if(!site)return;
+ const {c,p,damping}=params(),weight=site.weight,reference=d=>sitePull(d,10,4,.3);
+ const top=Math.max(40,c*weight),yMax=Math.ceil(top/10)*10;
+ const left=46,right=288,upper=25,bottom=180;
+ const px=d=>left+(d-1)/99*(right-left),py=f=>bottom-f/yMax*(bottom-upper);
+ let markup='';
+ for(let i=0;i<=4;i++){const value=yMax*i/4,y=py(value);markup+=`<path d="M${left} ${y}H${right}" stroke="#e5e9e1"/><text x="${left-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#67706f">${Number(value.toFixed(2))}</text>`;}
+ for(const d of [1,25,50,75,100]){const x=px(d);markup+=`<text x="${x}" y="197" text-anchor="middle" font-size="10" fill="#67706f">${d}</text>`;}
+ markup+=`<path d="M${left} ${upper}V${bottom}H${right}" fill="none" stroke="#92998f"/><text x="${left}" y="13" font-size="10" fill="#67706f">Attraction F</text><text x="167" y="215" text-anchor="middle" font-size="10" fill="#67706f">Distance d</text>`;
+ const path=fn=>Array.from({length:397},(_,i)=>{const d=1+i/4;return `${i?'L':'M'}${px(d).toFixed(2)},${py(fn(d)).toFixed(2)}`;}).join(' ');
+ markup+=`<path d="${path(reference)}" fill="none" stroke="#92998f" stroke-width="1.5" stroke-dasharray="4 4"/><path d="${path(d=>sitePull(d,c,weight,p))}" fill="none" stroke="#cc3e3e" stroke-width="2.5"/>`;
+ $('forcePlot').innerHTML=markup;
+ $('forcePlot').setAttribute('aria-label',`Site ${site.id+1}: attraction versus distance. C ${c}, salience ${weight}, exponent ${p}. Attraction at distance 10: ${sitePull(10,c,weight,p).toFixed(2)}. Red curve compared with a fixed reference.`);
+ $('forceEquation').textContent=`Site ${site.id+1}: F(d) = ${c} × ${weight} / max(d², 0.01)^${p.toFixed(2)}`;
+ $('forceExample').textContent=`At d = 10: F = ${sitePull(10,c,weight,p).toFixed(2)} · at d = 50: F = ${sitePull(50,c,weight,p).toFixed(2)}. This is one active site's pull; the simulation adds all active sites' pulls as vectors.`;
+ $('momentumEquation').textContent=`Momentum: v next = ${damping.toFixed(2)} × (v + 0.1 × total attraction). Playback speed changes the animation rate. These do not change the attraction curve.`;
+}
+
 function randomGenerator(n){return()=>{n|=0;n=n+0x6D2B79F5|0;let t=Math.imul(n^n>>>15,1|n);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;};}
-function choose(){const site=base.find(p=>p.id===selected)||base[0];selected=site.id;$('site').value=String(selected);$('weight').value=site.weight;$('weightOut').textContent=site.weight;$('selectedHint').textContent=`Site ${site.id+1} · position (${site.x.toFixed(1)}, ${site.y.toFixed(1)})`;draw();}
+function choose(){const site=base.find(p=>p.id===selected)||base[0];selected=site.id;$('site').value=String(selected);$('weight').value=site.weight;$('weightOut').textContent=site.weight;$('selectedHint').textContent=`Site ${site.id+1} · position (${site.x.toFixed(1)}, ${site.y.toFixed(1)})`;draw();drawForceGraph();}
 function menu(){$('site').replaceChildren(...base.map(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=`Site ${p.id+1}`;return o;}));choose();}
 function setRunning(on){running=on;last=0;acc=0;$('run').textContent=on?'Ⅱ Pause':'▶ Run';$('status').textContent=on?'Trajectory unfolding':state.step?'Paused':'Ready to explore';}
-function reset(){setRunning(false);state=Ecology.initial(base);view={x:0,y:0,size:100};stats();draw();}
+function reset(){setRunning(false);state=Ecology.initial(base);view={x:0,y:0,size:100};stats();draw();drawForceGraph();}
 function newEcology(){seed=Math.floor(Math.random()*900000)+100000;const rng=randomGenerator(seed);base=Array.from({length:+$('count').value},(_,id)=>({id,x:Math.floor(rng()*100),y:Math.floor(rng()*100),weight:1+Math.floor(rng()*9)}));selected=0;state=Ecology.initial(base);menu();reset();$('seed').textContent=seed;}
 function stats(){$('time').textContent=state.t.toFixed(1);$('visited').textContent=`${state.order.length} / ${base.length}`;$('speed').textContent=Math.hypot(state.vx,state.vy).toFixed(2);$('order').textContent=state.order.length?'Encounter order: '+state.order.map(id=>`Site ${id+1}`).join(' → '):'Encounter order will appear here.';}
 function fit(){const dpr=Math.min(window.devicePixelRatio||1,2);const r=canvas.getBoundingClientRect();size={w:r.width,h:r.height};canvas.width=Math.round(r.width*dpr);canvas.height=Math.round(r.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);draw();}
